@@ -1,0 +1,10 @@
+pandas
+numpy
+scikit-learn
+tensorflow
+ccxt
+ta-lib
+nltk
+tweepy
+praw
+newsapi-python
