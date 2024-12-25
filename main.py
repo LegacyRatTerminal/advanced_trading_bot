@@ -1,70 +1,101 @@
-# main.py
-import asyncio
-import signal
+import logging
 import sys
-from config.settings import TradingConfig
-from src.bot import AdvancedTradingBot
+from datetime import datetime
+from typing import Optional
 
-class GracefulExit(SystemExit):
-    code = 1
+# Import necessary modules
+from signal_generator import AdvancedSignalGenerator
+from data_source import DataSource
+from trading_executor import TradingExecutor
+from risk_manager import RiskManager
 
-async def main():
-    config = TradingConfig()
-    bot = AdvancedTradingBot(config)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s: %(message)s',
+    handlers=[
+        logging.FileHandler('trading_bot.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+def initialize_trading_bot():
+    """
+    Initialize trading bot components with error handling
+    
+    Returns:
+        tuple: Initialized components or None
+    """
+    try:
+        # Initialize data source
+        data_source = DataSource()
+        
+        # Initialize risk manager
+        risk_manager = RiskManager()
+        
+        # Initialize signal generator
+        signal_generator = AdvancedSignalGenerator(data_source)
+        
+        # Initialize trading executor
+        trading_executor = TradingExecutor()
+        
+        return data_source, signal_generator, risk_manager, trading_executor
+    
+    except Exception as init_error:
+        logging.error(f"Bot initialization failed: {init_error}")
+        return None
+
+def run_trading_bot():
+    """
+    Main trading bot execution logic
+    """
+    logging.info("Trading Bot Starting...")
+    
+    # Initialize components
+    components = initialize_trading_bot()
+    
+    if not components:
+        logging.critical("Failed to initialize trading bot. Exiting.")
+        sys.exit(1)
+    
+    data_source, signal_generator, risk_manager, trading_executor = components
     
     try:
-        await bot.run()
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        sys.exit(1)
-
-def handle_exit():
-    """
-    Synchronous signal handler for graceful shutdown
-    """
-    print("\nReceived exit signal. Shutting down gracefully...")
-    sys.exit(0)
-
-if __name__ == '__main__':
-    try:
-        # Set up signal handling for Windows and Unix-like systems
-        if sys.platform == 'win32':
-            # For Windows, use a simple keyboard interrupt handler
-            try:
-                asyncio.run(main())
-            except KeyboardInterrupt:
-                handle_exit()
+        # Generate trading signal
+        trading_signal = signal_generator.generate_signal()
+        logging.info(f"Generated Trading Signal: {trading_signal}")
+        
+        # Assess risk
+        risk_assessment = risk_manager.assess_risk(trading_signal)
+        
+        if risk_assessment['status'] == 'PROCEED':
+            # Execute trade
+            trade_result = trading_executor.execute_trade(
+                signal=trading_signal, 
+                risk_parameters=risk_assessment
+            )
+            
+            logging.info(f"Trade Execution Result: {trade_result}")
         else:
-            # For Unix-like systems, use more advanced signal handling
-            loop = asyncio.get_event_loop()
-            
-            # Add signal handlers
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(
-                    sig, 
-                    lambda s=sig: asyncio.create_task(shutdown(s))
-                )
-            
-            asyncio.run(main())
+            logging.warning(f"Trade Blocked: {risk_assessment['reason']}")
+    
+    except Exception as trading_error:
+        logging.error(f"Trading bot encountered an error: {trading_error}")
+    
+    finally:
+        logging.info("Trading Bot Execution Completed.")
+
+def main():
+    """
+    Entry point for the trading bot
+    """
+    try:
+        run_trading_bot()
+    except KeyboardInterrupt:
+        logging.info("Trading bot manually stopped.")
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        logging.critical(f"Unexpected error in main execution: {e}")
         sys.exit(1)
 
-async def shutdown(sig):
-    """
-    Graceful shutdown coroutine
-    """
-    print(f"\nReceived exit signal {sig.name}...")
-    
-    # Gather all running tasks
-    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    
-    # Cancel all tasks
-    for task in tasks:
-        task.cancel()
-    
-    # Wait for tasks to be canceled
-    await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Stop the event loop
-    asyncio.get_event_loop().stop()
+if __name__ == "__main__":
+    main()
